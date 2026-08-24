@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && (request.auth.token.admin == true || request.auth.token.role == 'admin'); }
+    function divisionMember(id) { return signedIn() && id in request.auth.token.divisions; }
+    function partnerMember(id) { return signedIn() && id in request.auth.token.partnerIds; }
+    function namedParty(data) { return request.auth.uid == data.participantUid || divisionMember(data.counterparty.id) || partnerMember(data.counterparty.id); }
+
+    match /businessParticipants/{uid} {
+      allow read: if resource.data.visibility == 'public' && resource.data.profileStatus == 'published' || signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.uid == uid && request.resource.data.endorsements.size() == 0;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.endorsements == resource.data.endorsements;
+      allow delete: if isAdmin();
+    }
+
+    match /businessOpportunities/{id} {
+      allow read: if resource.data.status == 'open' && resource.data.visibility == 'public' || signedIn();
+      allow create: if isAdmin() || divisionMember(request.resource.data.postedBy.id) || partnerMember(request.resource.data.postedBy.id);
+      allow update, delete: if isAdmin() || divisionMember(resource.data.postedBy.id) || partnerMember(resource.data.postedBy.id);
+    }
+
+    match /businessDirectOffers/{id} {
+      allow read: if signedIn() && (request.auth.uid == resource.data.toUid || isAdmin() || divisionMember(resource.data.fromId) || partnerMember(resource.data.fromId));
+      allow write: if false; // Server API verifies partners and controls convergence into engagements.
+    }
+
+    match /businessEngagements/{id} {
+      allow read: if signedIn() && (isAdmin() || namedParty(resource.data));
+      allow write: if false; // Server-only: rules engine, transactions, endorsements, and seat writeback.
+    }
+
+    match /institutionalPartners/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /beamInstitutionalRoles/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}
